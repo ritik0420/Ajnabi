@@ -14,6 +14,10 @@ export function createRoom(socketA: string, socketB: string): string {
   return roomId;
 }
 
+export function getRoomId(socketId: string): string | null {
+  return roomBySocket.get(socketId) ?? null;
+}
+
 export function getPeer(socketId: string): string | null {
   const roomId = roomBySocket.get(socketId);
   if (!roomId) return null;
