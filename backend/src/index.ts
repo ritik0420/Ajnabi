@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
 import { env } from "./config/env.js";
+import { registerSocketHandlers } from "./socket/index.js";
 
 const app = express();
 app.use(cors({ origin: env.frontendOrigin }));
@@ -17,13 +18,7 @@ const io = new Server(httpServer, {
   cors: { origin: env.frontendOrigin },
 });
 
-io.on("connection", (socket) => {
-  console.log(`socket connected: ${socket.id}`);
-
-  socket.on("disconnect", (reason) => {
-    console.log(`socket disconnected: ${socket.id} (${reason})`);
-  });
-});
+registerSocketHandlers(io);
 
 httpServer.listen(env.port, () => {
   console.log(`backend listening on port ${env.port}`);
