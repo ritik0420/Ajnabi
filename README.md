@@ -12,9 +12,10 @@ Early-stage, incrementally built. What's implemented so far:
 - Redis-backed matchmaking queue (join queue → paired with another waiting user)
 - WebRTC signaling relay over Socket.IO (offer/answer/ICE exchange)
 - Real peer-to-peer video/audio connection between two matched users
-- Call ends → both sides notified, back to idle
+- Next/Skip: skip to a new stranger mid-call, or find a new one after the other side leaves — without re-requesting camera access
+- Call ends (either side leaves or disconnects) → the other side is notified
 
-Not yet implemented: Next/Skip (re-queue after a call ends), abuse/reporting tools, MongoDB-backed persistence, TURN server (see [Known limitations](#known-limitations)).
+Not yet implemented: abuse/reporting tools, MongoDB-backed persistence, TURN server (see [Known limitations](#known-limitations)).
 
 ## Tech stack
 
@@ -130,7 +131,6 @@ Open `http://localhost:3000` in two browser windows/tabs (or two different brows
 - **IP exposure via WebRTC (production blocker):** peer connections currently use public STUN servers only. ICE candidates inherently reveal each user's IP address to their matched peer — this conflicts with the product's "never expose user IPs" requirement. Fixing it requires a TURN server (self-hosted `coturn` or a paid provider) with `iceTransportPolicy: "relay"` forced on the frontend, so all media relays through the TURN server instead of connecting directly. This must be in place before real users are on the platform.
 - **No abuse/reporting tools yet.** No report button, no blocking, no rate-limiting or ban mechanism.
 - **No MongoDB usage yet.** Nothing persistent needs storing yet (guest/anonymous, no accounts); it'll come in once there's a concrete need (e.g. reports, ban lists).
-- **No Next/Skip logic.** Ending a call currently returns both users to the idle screen; there's no one-click "find someone else."
 - **Single backend instance assumed.** Room/peer pairing state lives in process memory (by design — see `matchmaking/rooms.ts`). Horizontal scaling would need that moved to Redis plus a Socket.IO Redis adapter to relay events across instances.
 - **Moderate npm advisory:** a transitive DoS advisory in `qs` (via Express 4's `body-parser`) has no non-breaking fix yet; would need an Express 5 upgrade. Low risk currently since no untrusted query strings are parsed.
 
