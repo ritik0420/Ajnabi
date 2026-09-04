@@ -186,6 +186,24 @@ export function useVideoChat() {
     endCall();
   }, [endCall]);
 
+  // Skip the current stranger and look for a new one, without dropping the
+  // socket or re-requesting camera/mic access.
+  const skipToNext = useCallback(() => {
+    if (!socketRef.current?.connected) return;
+    teardownPeerConnection();
+    socketRef.current.emit("queue:next");
+  }, [teardownPeerConnection]);
+
+  // From the "ended" screen (the other side left or skipped): search again
+  // on the same socket and local stream, no permission prompt needed.
+  const findNext = useCallback(() => {
+    if (!socketRef.current?.connected || !localStreamRef.current) {
+      void startCall();
+      return;
+    }
+    socketRef.current.emit("queue:join");
+  }, [startCall]);
+
   useEffect(() => endCall, [endCall]);
 
   return {
@@ -194,6 +212,8 @@ export function useVideoChat() {
     remoteVideoRef,
     startCall,
     cancelSearch,
+    skipToNext,
+    findNext,
     endCall,
   };
 }

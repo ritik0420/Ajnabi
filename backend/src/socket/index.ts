@@ -2,6 +2,14 @@ import type { Server, Socket } from "socket.io";
 import { createRoom, getPeer, getRoomId, leaveRoom } from "../matchmaking/rooms.js";
 import { dequeuePair, enqueue, removeFromQueue } from "../matchmaking/queue.js";
 
+function leaveCurrentRoom(io: Server, socketId: string): void {
+  const peerId = getPeer(socketId);
+  leaveRoom(socketId);
+  if (peerId) {
+    io.to(peerId).emit("match:ended");
+  }
+}
+
 async function tryMatch(io: Server): Promise<void> {
   const pair = await dequeuePair();
   if (!pair) return;
@@ -43,6 +51,15 @@ export function registerSocketHandlers(io: Server): void {
       await removeFromQueue(socket.id);
     });
 
+    // "Skip": leave the current match (notifying the old peer, same as a
+    // disconnect would) and immediately re-enter the queue for a new one.
+    socket.on("queue:next", async () => {
+      leaveCurrentRoom(io, socket.id);
+      await enqueue(socket.id);
+      socket.emit("queue:waiting");
+      await tryMatch(io);
+    });
+
     // Signaling relay: the server never inspects SDP/ICE contents, it just
     // forwards them to the other member of the sender's room. socket.to()
     // excludes the sender, and a room only ever has the two matched peers,
@@ -69,12 +86,7 @@ export function registerSocketHandlers(io: Server): void {
       console.log(`socket disconnected: ${socket.id} (${reason})`);
 
       await removeFromQueue(socket.id);
-
-      const peerId = getPeer(socket.id);
-      leaveRoom(socket.id);
-      if (peerId) {
-        io.to(peerId).emit("match:ended");
-      }
+      leaveCurrentRoom(io, socket.id);
     });
   });
 }
