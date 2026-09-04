@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
-import { createSocket } from "@/lib/socket";
+import { createSocket, BACKEND_URL } from "@/lib/socket";
 
 export type CallStatus =
   | "idle"
@@ -11,12 +11,25 @@ export type CallStatus =
   | "searching"
   | "connecting"
   | "in-call"
-  | "ended";
+  | "ended"
+  | "banned";
 
-// STUN only: peers still exchange real IP addresses via ICE candidates.
-// A TURN server (iceTransportPolicy: "relay") is required before this
-// goes in front of real users, to keep IPs hidden from the matched peer.
-const ICE_SERVERS: RTCIceServer[] = [
+// Keep in sync with backend/src/moderation/reports.ts.
+export const REPORT_REASONS = [
+  { value: "nudity-sexual-content", label: "Nudity or sexual content" },
+  { value: "harassment-abuse", label: "Harassment or abuse" },
+  { value: "underage-user", label: "Underage user" },
+  { value: "spam-scam", label: "Spam or scam" },
+  { value: "other", label: "Other" },
+] as const;
+
+export type ReportReason = (typeof REPORT_REASONS)[number]["value"];
+
+// Fallback only: used if /ice-config can't be reached, so local dev
+// doesn't fully break when the backend or TURN server is down. Real
+// calls should always get a TURN server from the backend - see
+// fetchIceServers below.
+const STUN_FALLBACK: RTCIceServer[] = [
   { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
 ];
 
@@ -31,6 +44,30 @@ interface SdpPayload {
 
 interface IceCandidatePayload {
   candidate: RTCIceCandidateInit;
+}
+
+async function fetchIceConfig(): Promise<{
+  iceServers: RTCIceServer[];
+  hasTurn: boolean;
+}> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/ice-config`);
+    if (!res.ok) throw new Error(`ice-config responded ${res.status}`);
+    const data: { iceServers: RTCIceServer[] } = await res.json();
+    const hasTurn = data.iceServers.some((server) =>
+      (Array.isArray(server.urls) ? server.urls : [server.urls]).some((url) =>
+        url.startsWith("turn:"),
+      ),
+    );
+    return { iceServers: data.iceServers, hasTurn };
+  } catch (err) {
+    console.warn(
+      "Could not fetch TURN config from backend; falling back to STUN only. " +
+        "This means IP addresses will be exposed to the matched peer.",
+      err,
+    );
+    return { iceServers: STUN_FALLBACK, hasTurn: false };
+  }
 }
 
 export function useVideoChat() {
@@ -67,7 +104,15 @@ export function useVideoChat() {
 
   const setupPeerConnection = useCallback(
     async (roomId: string, initiator: boolean) => {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const { iceServers, hasTurn } = await fetchIceConfig();
+
+      // Once we have a TURN server, force every peer connection through
+      // it rather than allowing a direct STUN-negotiated path - that's
+      // what actually keeps IP addresses hidden from the matched peer.
+      const pc = new RTCPeerConnection({
+        iceServers,
+        iceTransportPolicy: hasTurn ? "relay" : "all",
+      });
       pcRef.current = pc;
 
       localStreamRef.current
@@ -154,8 +199,16 @@ export function useVideoChat() {
         teardownPeerConnection();
         setStatus("ended");
       });
+
+      socket.on("banned", () => {
+        teardownPeerConnection();
+        stopLocalStream();
+        socket.disconnect();
+        socketRef.current = null;
+        setStatus("banned");
+      });
     },
-    [flushPendingCandidates, setupPeerConnection, teardownPeerConnection],
+    [flushPendingCandidates, setupPeerConnection, stopLocalStream, teardownPeerConnection],
   );
 
   const startCall = useCallback(async () => {
@@ -204,6 +257,17 @@ export function useVideoChat() {
     socketRef.current.emit("queue:join");
   }, [startCall]);
 
+  // Reports the current peer and skips - the server handles logging the
+  // report and re-queueing us, same as skipToNext.
+  const submitReport = useCallback(
+    (reason: ReportReason) => {
+      if (!socketRef.current?.connected) return;
+      teardownPeerConnection();
+      socketRef.current.emit("report", { reason });
+    },
+    [teardownPeerConnection],
+  );
+
   useEffect(() => endCall, [endCall]);
 
   return {
@@ -214,6 +278,7 @@ export function useVideoChat() {
     cancelSearch,
     skipToNext,
     findNext,
+    submitReport,
     endCall,
   };
 }

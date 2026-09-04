@@ -1,0 +1,49 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ajnabi-redis
+    ports:
+      - "6379:6379"
+
+  mongo:
+    image: mongo:7
+    container_name: ajnabi-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  # Local dev TURN server. The secret here must match TURN_SECRET in
+  # backend/.env - it's how the backend mints credentials coturn accepts.
+  # This is a fixed dev-only value; a real deployment needs its own
+  # secret and public reachability, which this compose file doesn't
+  # provide.
+  #
+  # external-ip defaults to 127.0.0.1 (same-machine testing only, e.g.
+  # two browser tabs). To test from another device on your network, set
+  # TURN_EXTERNAL_IP=<your machine's LAN IP> before running `docker
+  # compose up`, and NEXT_PUBLIC_BACKEND_URL on the other device to
+  # point at that same LAN IP - the address coturn advertises for relay
+  # candidates must be one the other peer can actually reach.
+  coturn:
+    image: coturn/coturn:latest
+    container_name: ajnabi-coturn
+    command: >
+      --listening-port=3478
+      --min-port=49160
+      --max-port=49200
+      --realm=ajnabi.local
+      --use-auth-secret
+      --static-auth-secret=local-dev-turn-secret-change-in-production
+      --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
+      --no-cli
+      --no-tls
+      --no-dtls
+      --log-file=stdout
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+
+volumes:
+  mongo-data:
